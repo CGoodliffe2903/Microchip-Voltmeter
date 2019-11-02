@@ -1,0 +1,198 @@
+//Voltmeter using Microchip PIC16F84A
+//setup config bits
+#pragma config FOSC = XT
+#pragma config WDTE = OFF
+#pragma config PWRTE = ON
+#pragma config CP = OFF
+
+//set oscillator freq to 4MHz
+#define _XTAL_FREQ 4000000
+
+//define button pins that aren't interrupt pins
+#define RA2 Button
+#define RA3 LED
+
+//include PIC operation header file
+//and pre-made lcd and adc libraries
+#include <xc.h>
+#include "lcd.h"
+#include "adc.h"
+
+//initialising variables & functions
+int DC_IN;
+int DC_IN_MOD;
+
+//variables used to 
+int max_int = 0;                //variable stores max registered integer
+int max_fractional = 0;         //variable stores max fractional value 
+
+//pause inhibits updated LCD printing and is active LOW, 0 = paused LCD
+int pause = 1;
+
+//mode allows the highest read voltage to be displayed
+int mode = 0;
+
+void Welcome();     //welcome display
+
+void LCD_Display(int x, int y);      //LCD display routine
+
+////////////////////////////////////////////////////////////////////////////////
+//interrupt used to pause/resume reading LCD display
+void interrupt isr()
+{
+    INTCONbits.INTF = 0;    //reset interrupt flag to 0
+    
+    pause = !pause;         //make the pause variable the not of itself
+}
+////////////////////////////////////////////////////////////////////////////////
+void main()
+{
+    
+    INTCONbits.INTF = 0;            //clear interrupt flag
+    OPTION_REGbits.INTEDG = 0;      //triggered on a falling edge
+    INTCONbits.INTE = 1;            //enable external interrupts
+    INTCONbits.GIE = 1;             //enable global interrupts
+
+    Welcome();
+    
+    while(1)
+    {
+        
+        TRISA = 0b00000100;         //setting I/O config for PORTA & PORTB
+        TRISB = 0b11111111;
+        
+        //when the mode button is pushed the max reading is displayed
+        if(Button && pause)
+        {
+            while(Button)           //update variable after button release
+            {
+            }
+            mode = !mode;           //cease maximum display update
+            TRISB = 0b0000001;      
+            RW = 0;
+            Lcd_Clear();
+            RW = 1;
+            TRISB = 0b11111111;
+        }
+        
+        DC_IN = readADC();                              //obtain DOC       
+           
+        DC_IN_MOD = ((DC_IN << 2) + DC_IN) % 1024;      // Fractional value of reading obtained
+        DC_IN = ((DC_IN << 2) + DC_IN) >> 10;           // Integer value of reading obtained
+       
+        if((DC_IN >= 2) && (DC_IN_MOD >= 500))          // Conditional 
+        {
+            LED = 0;
+        }
+        else if((DC_IN <= 2) && (DC_IN_MOD < 500))
+        {
+            LED = 1;
+        }
+        
+        if(DC_IN > max_int)                 //when reading is larger than max 
+        {
+            max_fractional = 0;             //reduce max fractional to 0
+            max_int = DC_IN;                //set max int to new reading
+        }
+        if(DC_IN == max_int)                //nested if protects fractional max 
+        {                                   //from glitches
+            if(DC_IN_MOD > max_fractional)  
+            {
+                max_fractional = DC_IN_MOD; //set new fractional max if reading
+            }                               //is larger
+        }
+        if(pause)                           //readings not displayed if pause = 0   
+        {
+            TRISB = 0b00000001;             //configure PORTB
+    
+            RW = 0;                         //enable LCD writing
+    
+            Lcd_Init(); 
+    
+            Lcd_Set_Cursor(1,1);            //set cursor to first 8 character
+            
+            LCD_Display(DC_IN, DC_IN_MOD);  //Write the reading on the LCD 
+        }
+        
+        if(mode && pause)
+        {
+            TRISB = 0b0000001;                  //set all PORTB to outputs
+    
+            RW = 0;                             //enable LCD writing
+    
+            Lcd_Init();                        
+    
+            Lcd_Set_Cursor(2,1);            
+            
+            LCD_Display(max_int, max_fractional);   //write the maximum reading
+                                                    //on the LCD  
+        }
+    }                    
+}
+
+////////////////////////////////////////////////////////////////////////////////
+//display welcome message
+void Welcome()
+{
+    TRISB = 0b00000001;     //displaying separate characters uses less data than
+    
+    RW = 0;                 //displaying strings
+    
+    Lcd_Init();  
+    
+    Lcd_Clear();
+    
+    Lcd_Set_Cursor(1,1);    //enable lcd writing 
+    
+    Lcd_Write_Char('W');    //clear previous display
+    Lcd_Write_Char('e');    //display message character by character
+    Lcd_Write_Char('l');
+    Lcd_Write_Char('c');
+    Lcd_Write_Char('o');
+    Lcd_Write_Char('m');
+    Lcd_Write_Char('e');
+    
+    Lcd_Set_Cursor(2,1);
+    
+    Lcd_Write_Char('0');    //display readable voltage range 
+    Lcd_Write_Char('-');
+    Lcd_Write_Char('5');
+    Lcd_Write_Char('V');
+    
+    __delay_ms(1000);       //display complete message for 1 second
+    Lcd_Clear();            //clear the welcome message from the LCD
+    RW = 1;                 //disable writing to LCD
+    
+    return;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+//routinely update the displayed voltage
+void LCD_Display(x, y)
+{ 
+    
+    Lcd_Write_Int(x);        //Display units value for voltage reading 
+    
+    Lcd_Write_Char('.');     //print the decimal point
+    
+    if(y < 100)                //ensures display of 3 decimal places 
+    {
+        Lcd_Write_Char('0');
+        if(y < 10)
+        {
+            Lcd_Write_Char('0');
+        }
+    }
+    else if(y >= 1000)     //ensure the fractional reading doesn't exceed 1000 
+    {                       
+        y = 999;
+    }
+
+    Lcd_Write_Int(y);               //display the fractional reading 
+    
+    Lcd_Write_Char('V');            //display the standard units
+    
+    RW = 1;                         //disable LCD writing
+    
+    return;        
+}
